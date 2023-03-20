@@ -3,11 +3,6 @@ package main
 import (
 	"crypto/tls"
 	"fmt"
-	"github.com/asaskevich/govalidator"
-	"github.com/docopt/docopt-go"
-	"github.com/kardianos/osext"
-	"github.com/vaughan0/go-ini"
-	"gopkg.in/ldap.v2"
 	"log"
 	"log/syslog"
 	"net/url"
@@ -15,9 +10,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/asaskevich/govalidator"
+	"github.com/docopt/docopt-go"
+	"github.com/kardianos/osext"
+	"github.com/vaughan0/go-ini"
+	"gopkg.in/ldap.v2"
 )
 
-const version = "1.5"
+const version = "1.6"
 
 var usage = `goklp: OpenSSH Keys LDAP Provider for AuthorizedKeysCommand
 
@@ -40,6 +41,7 @@ Config file is required, named: goklp.ini or passed using --config=/path/to/file
 	goklp_ldap_timeout_secs     = 10                           (optional - default: 5)
 	goklp_ldap_user_attr        = 10                           (optional - default: uid)
 	goklp_debug                 = true                     (optional - default: false)
+	goklp_console               = true                     (optional - default: false)
 	goklp_insecure_skip_verify  = false                    (optional - default: false)
 `
 
@@ -52,6 +54,7 @@ type opts struct {
 	goklp_ldap_user_attr       string
 	goklp_ldap_uris            []string
 	goklp_debug                bool
+	goklp_console              bool
 	goklp_insecure_skip_verify bool
 	goklp_ldap_timeout         time.Duration
 }
@@ -71,7 +74,7 @@ type result struct {
 	ldapURL string
 }
 
-////
+// //
 func main() {
 	// parse options and config file
 	o, err := getOpts()
@@ -80,15 +83,18 @@ func main() {
 	}
 
 	// setup logging
-	logger, err := syslog.New(syslog.LOG_ALERT|syslog.LOG_USER, "goklp")
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.SetOutput(logger)
+	if o.goklp_debug {
+	    if !o.goklp_console {
+            logger, err := syslog.New(syslog.LOG_DEBUG|syslog.LOG_USER, "goklp")
+            if err != nil {
+                log.Fatal(err)
+            }
+            log.SetOutput(logger)
+        }
+    }
 
 	// Finding our config file to parse
 	configFile, err := findConfigFile(o.goklp_config_file)
-	logger.Info(fmt.Sprintf("Using config file %s", configFile))
 
 	err = parseConfigFile(configFile, o)
 	if err != nil {
@@ -98,7 +104,9 @@ func main() {
 	// run ldapsearch
 	keys, err := o.ldapsearch()
 	if err != nil {
-		logger.Alert(err.Error())
+		if o.goklp_debug {
+			log.Println(fmt.Sprintf("Error in query while looking for keys for %s: %s", o.username, err.Error()))
+		}
 	}
 
 	// output keys
@@ -106,11 +114,11 @@ func main() {
 		fmt.Println(strings.Join(keys, "\n"))
 	}
 	if o.goklp_debug {
-		logger.Debug(fmt.Sprintf("Successfully found %d keys for %s", len(keys), o.username))
+		log.Println(fmt.Sprintf("Successfully found %d keys for %s", len(keys), o.username))
 	}
 }
 
-////
+// //
 func (o *opts) ldapsearch() ([]string, error) {
 	keys := []string{}
 
@@ -158,7 +166,7 @@ func (o *opts) ldapsearch() ([]string, error) {
 	return keys, nil
 }
 
-////
+// //
 func (o *opts) doquery(q query) (*ldap.SearchResult, error) {
 	sr := &ldap.SearchResult{}
 
@@ -227,7 +235,7 @@ func (o *opts) doquery(q query) (*ldap.SearchResult, error) {
 	return sr, nil
 }
 
-////
+// //
 func getOpts() (*opts, error) {
 	o := &opts{}
 	arguments, err := docopt.Parse(usage, nil, true, version, false)
@@ -326,6 +334,10 @@ func parseConfigFile(configFile string, o *opts) error {
 	// debugging goes to syslog
 	if s, exists := config[""]["goklp_debug"]; exists && s == "true" {
 		o.goklp_debug = true
+	}
+	// or to console
+	if s, exists := config[""]["goklp_console"]; exists && s == "true"  {
+		o.goklp_console = true
 	}
 	if s, exists := config[""]["goklp_insecure_skip_verify"]; exists && s == "true" {
 		o.goklp_insecure_skip_verify = true
